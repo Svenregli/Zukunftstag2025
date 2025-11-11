@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Echtzeit-Gesichtserkennung</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.0"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 1200px;
+            width: 100%;
+            padding: 30px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .status-bar {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .status-bar.loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-bar.ready {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-bar.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .video-section {
+            position: relative;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            background: #000;
+            display: block;
+        }
+
+        .identification-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 30px;
+            font-size: 1.2em;
+            font-weight: bold;
+            min-width: 200px;
+            text-align: center;
+            display: none;
+        }
+
+        .identification-overlay.active {
+            display: block;
+        }
+
+        .identification-overlay.unknown {
+            background: rgba(220, 53, 69, 0.9);
+        }
+
+        .identification-overlay.identified {
+            background: rgba(40, 167, 69, 0.9);
+        }
+
+        .controls-section {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .add-user-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+        }
+
+        .add-user-section h3 {
+            color: white;
+        }
+
+        .btn-add-user:hover:not(:disabled) {
+            background: #138496 !important;
+        }
+
+        .btn-remove {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-remove:hover:not(:disabled) {
+            background: #5a6268;
+        }
+
+        #userCardsContainer {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .user-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+
+        .user-card.active {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .user-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .user-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .sample-count {
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            flex: 1;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-capture {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-capture:hover:not(:disabled) {
+            background: #218838;
+        }
+
+        .btn-clear {
+            background: #dc3545;
+            color: white;
+            flex: 0.5;
+        }
+
+        .btn-clear:hover:not(:disabled) {
+            background: #c82333;
+        }
+
+        .train-section {
+            margin-top: 20px;
+        }
+
+        .nn-config-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 2px solid #e0e0e0;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .config-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .config-item label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #333;
+            font-size: 0.95em;
+        }
+
+        .value-display {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-weight: bold;
+            min-width: 50px;
+            text-align: center;
+        }
+
+        .config-item input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 5px;
+            background: #d3d3d3;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .config-item input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .config-item input[type="range"]::-webkit-slider-thumb:hover {
+            background: #764ba2;
+            transform: scale(1.2);
+        }
+
+        .config-item input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s ease;
+        }
+
+        .config-item input[type="range"]::-moz-range-thumb:hover {
+            background: #764ba2;
+            transform: scale(1.2);
+        }
+
+        .config-hint {
+            font-size: 0.85em;
+            color: #666;
+            font-style: italic;
+        }
+
+        .btn-train {
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 1.3em;
+        }
+
+        .btn-train:hover:not(:disabled) {
+            background: linear-gradient(135deg, #5568d3 0%, #65408b 100%);
+        }
+
+        .model-status {
+            text-align: center;
+            margin-top: 10px;
+            padding: 10px;
+            background: #e7f3ff;
+            border-radius: 8px;
+            color: #004085;
+            font-weight: 600;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .progress-bar.active {
+            display: block;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .instructions {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .instructions h3 {
+            color: #004085;
+            margin-bottom: 10px;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            color: #004085;
+        }
+
+        .instructions li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎭 Echtzeit-Gesichtserkennung</h1>
+
+        <div class="status-bar loading" id="statusBar">
+            <strong>Wird geladen:</strong> TensorFlow.js und MobileNet werden gestartet...
+        </div>
+
+        <div class="instructions">
+            <h3>🎮 So funktioniert's - Schritt für Schritt:</h3>
+            <ol>
+                <li><strong>👥 Personen hinzufügen:</strong> Tippe Namen ein (z.B. Anna, Max, Lisa) und klicke auf "Hinzufügen". Du brauchst mindestens 2 Personen!</li>
+                <li><strong>📷 Vor die Kamera:</strong> Stelle dich vor die Kamera, sodass dein Gesicht gut sichtbar ist.</li>
+                <li><strong>📸 Fotos machen:</strong> Klicke für jede Person auf "Fotos aufnehmen". Bewege dabei deinen Kopf ein bisschen (links, rechts, lächeln)!</li>
+                <li><strong>🧠 KI-Einstellungen:</strong> Experimentiere mit den Schiebereglern! Was passiert, wenn du mehr Neuronen oder mehr Trainings-Runden verwendest?</li>
+                <li><strong>🚀 Training starten:</strong> Klicke auf "Modell trainieren" und beobachte, wie die KI lernt!</li>
+                <li><strong>🎉 Erkennung testen:</strong> Jetzt kann die KI erkennen, wer vor der Kamera ist! Probier es aus!</li>
+            </ol>
+        
+        </div>
+
+        <div class="main-content">
+            <div class="video-section">
+                <video id="webcam" autoplay playsinline></video>
+                <div class="identification-overlay" id="identificationOverlay">
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <div class="add-user-section">
+                    <h3 style="margin-bottom: 10px; color: #333;">➕ Person hinzufügen</h3>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="newUserName" placeholder="Name eingeben (z.B. Anna)" style="flex: 1; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em;">
+                        <button class="btn-add-user" onclick="addUser()" disabled style="background: #17a2b8; color: white; padding: 10px 20px;">
+                            ➕ Hinzufügen
+                        </button>
+                    </div>
+                </div>
+
+                <div id="userCardsContainer">
+                    <!-- User cards will be added dynamically here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="train-section">
+            <div class="nn-config-section">
+                <h3 style="color: #333; margin-bottom: 15px;">🧠 KI-Gehirn Einstellungen</h3>
+                <p style="color: #666; margin-bottom: 15px; font-size: 0.9em;">
+                    Hier kannst du einstellen, wie deine künstliche Intelligenz lernt! Experimentiere und finde heraus, was am besten funktioniert! 🔬
+                </p>
+                
+                <div class="config-grid">
+                    <div class="config-item">
+                        <label for="hiddenUnits1">
+                            <strong>🔷 Neuronen in Schicht 1:</strong> 
+                            <span id="hiddenUnits1Value" class="value-display">128</span>
+                        </label>
+                        <input type="range" id="hiddenUnits1" min="32" max="256" step="32" value="128" 
+                               oninput="updateConfigDisplay('hiddenUnits1', this.value)">
+                        <div class="config-hint">Mehr Neuronen = Mehr Gehirnzellen = Kann mehr lernen (aber langsamer) 🐌</div>
+                    </div>
+
+                    <div class="config-item">
+                        <label for="hiddenUnits2">
+                            <strong>🔶 Neuronen in Schicht 2:</strong> 
+                            <span id="hiddenUnits2Value" class="value-display">64</span>
+                        </label>
+                        <input type="range" id="hiddenUnits2" min="16" max="128" step="16" value="64" 
+                               oninput="updateConfigDisplay('hiddenUnits2', this.value)">
+                        <div class="config-hint">Die zweite Schicht verarbeitet die Informationen aus der ersten 🎯</div>
+                    </div>
+
+                    <div class="config-item">
+                        <label for="epochs">
+                            <strong>🔄 Trainings-Runden (Epochen):</strong> 
+                            <span id="epochsValue" class="value-display">30</span>
+                        </label>
+                        <input type="range" id="epochs" min="10" max="100" step="10" value="30" 
+                               oninput="updateConfigDisplay('epochs', this.value)">
+                        <div class="config-hint">Wie oft die KI alle Bilder ansieht. Mehr Runden = Besseres Lernen! 📚</div>
+                    </div>
+
+                    <div class="config-item">
+                        <label for="learningRate">
+                            <strong>⚡ Lern-Geschwindigkeit:</strong> 
+                            <span id="learningRateValue" class="value-display">0.001</span>
+                        </label>
+                        <input type="range" id="learningRate" min="0.0001" max="0.01" step="0.0001" value="0.001" 
+                               oninput="updateConfigDisplay('learningRate', this.value)">
+                        <div class="config-hint">Wie schnell die KI lernt. Schneller = Weniger genau, Langsamer = Genauer 🎓</div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn-train" id="trainBtn" onclick="trainModel()" disabled>
+                🚀 Modell trainieren - KI lernen lassen!
+            </button>
+            <div class="progress-bar" id="progressBar">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+            <div class="model-status" id="modelStatus" style="display: none;">
+                Modell noch nicht trainiert
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let mobilenet;
+        let model;
+        let isCapturing = false;
+        let isIdentifying = false;
+        const trainingData = {};
+        let userLabels = [];
+
+        // No default users - start fresh!
+
+        function updateConfigDisplay(configName, value) {
+            const displayElement = document.getElementById(configName + 'Value');
+            if (configName === 'learningRate') {
+                displayElement.textContent = parseFloat(value).toFixed(4);
+            } else {
+                displayElement.textContent = value;
+            }
+        }
+
+        function addUser() {
+            const input = document.getElementById('newUserName');
+            const userName = input.value.trim();
+
+            // Validation
+            if (!userName) {
+                alert('Bitte gib einen Namen ein! 😊');
+                return;
+            }
+
+            if (userName.length > 20) {
+                alert('Der Name ist zu lang! Maximal 20 Buchstaben bitte. 📏');
+                return;
+            }
+
+            if (userLabels.includes(userName)) {
+                alert('Diese Person gibt es schon! Wähle einen anderen Namen. 👥');
+                return;
+            }
+
+            // Add user to data structures
+            userLabels.push(userName);
+            trainingData[userName] = [];
+
+            // Create user card
+            const container = document.getElementById('userCardsContainer');
+            const userCard = document.createElement('div');
+            userCard.className = 'user-card';
+            userCard.setAttribute('data-user', userName);
+            userCard.innerHTML = `
+                <div class="user-header">
+                    <span class="user-name">👤 ${userName}</span>
+                    <span class="sample-count" id="count-${userName}">0 Fotos</span>
+                </div>
+                <div class="user-actions">
+                    <button class="btn-capture" onclick="captureSamples('${userName}')">
+                        📸 Fotos aufnehmen
+                    </button>
+                    <button class="btn-clear" onclick="clearSamples('${userName}')">
+                        🗑️
+                    </button>
+                    <button class="btn-remove" onclick="removeUser('${userName}')" style="background: #6c757d; color: white; flex: 0.5;">
+                        ❌
+                    </button>
+                </div>
+            `;
+
+            container.appendChild(userCard);
+
+            // Clear input
+            input.value = '';
+
+            // Reset model if it was trained
+            if (model) {
+                model.dispose();
+                model = null;
+                isIdentifying = false;
+                document.getElementById('identificationOverlay').classList.remove('active');
+                document.getElementById('modelStatus').textContent = '⚠ Modell zurückgesetzt - neues Training erforderlich';
+                document.getElementById('modelStatus').style.background = '#fff3cd';
+                document.getElementById('modelStatus').style.color = '#856404';
+            }
+
+            updateStatus(`Person "${userName}" wurde erfolgreich hinzugefügt! 🎉`, 'ready');
+            checkTrainEligibility();
+        }
+
+        function removeUser(userName) {
+            // Don't allow removing if model is trained and identifying
+            if (isIdentifying) {
+                if (!confirm('Das Modell läuft gerade. Wenn du diese Person entfernst, stoppt die Erkennung. Fortfahren?')) {
+                    return;
+                }
+            }
+
+            if (!confirm(`Person "${userName}" und alle Fotos wirklich löschen? 🗑️`)) {
+                return;
+            }
+
+            // Dispose tensors
+            if (trainingData[userName]) {
+                trainingData[userName].forEach(tensor => tensor.dispose());
+                delete trainingData[userName];
+            }
+
+            // Remove from userLabels
+            userLabels = userLabels.filter(u => u !== userName);
+
+            // Remove card from DOM
+            const card = document.querySelector(`[data-user="${userName}"]`);
+            if (card) {
+                card.remove();
+            }
+
+            // Reset model if it was trained
+            if (model) {
+                model.dispose();
+                model = null;
+                isIdentifying = false;
+                document.getElementById('identificationOverlay').classList.remove('active');
+                document.getElementById('modelStatus').textContent = '⚠ Modell zurückgesetzt - neues Training erforderlich';
+                document.getElementById('modelStatus').style.background = '#fff3cd';
+                document.getElementById('modelStatus').style.color = '#856404';
+            }
+
+            updateStatus(`Person "${userName}" wurde entfernt`, 'ready');
+            checkTrainEligibility();
+        }
+
+        // Initialize the application
+        async function init() {
+            try {
+                console.log('Starting initialization...');
+                updateStatus('MobileNet-Modell wird geladen...', 'loading');
+                
+                // Check if TensorFlow.js and MobileNet are loaded
+                if (typeof tf === 'undefined') {
+                    throw new Error('TensorFlow.js konnte nicht geladen werden. Bitte überprüfe deine Internetverbindung.');
+                }
+                
+                if (typeof window.mobilenet === 'undefined') {
+                    throw new Error('MobileNet konnte nicht geladen werden. Bitte überprüfe deine Internetverbindung.');
+                }
+                
+                console.log('TensorFlow.js version:', tf.version.tfjs);
+                
+                // Load MobileNet
+                mobilenet = await window.mobilenet.load();
+                console.log('MobileNet loaded successfully');
+
+                // Setup webcam
+                updateStatus('Kamera wird gestartet...', 'loading');
+                
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Dein Browser unterstützt keine Kamera. Bitte verwende Chrome, Firefox oder Edge.');
+                }
+                
+                const video = document.getElementById('webcam');
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    } 
+                });
+                
+                video.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        console.log('Video metadata loaded');
+                        video.play().then(() => {
+                            console.log('Video playing');
+                            resolve();
+                        }).catch(reject);
+                    };
+                    video.onerror = () => {
+                        reject(new Error('Video konnte nicht geladen werden'));
+                    };
+                    // Timeout after 10 seconds
+                    setTimeout(() => reject(new Error('Video Ladezeit überschritten')), 10000);
+                });
+
+                console.log('Initialization complete!');
+                updateStatus('Fertig! Füge deine erste Person hinzu, um zu starten! 🎉', 'ready');
+                enableButtons();
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                let errorMessage = 'Fehler: ' + error.message;
+                if (error.name === 'NotAllowedError') {
+                    errorMessage = 'Kamera-Zugriff verweigert. Bitte erlaube den Kamera-Zugriff und lade die Seite neu.';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = 'Keine Kamera gefunden. Bitte schließe eine Kamera an und lade die Seite neu.';
+                } else if (error.name === 'NotReadableError') {
+                    errorMessage = 'Die Kamera wird bereits von einer anderen Anwendung verwendet.';
+                }
+                updateStatus(errorMessage, 'error');
+            }
+        }
+
+        function updateStatus(message, type) {
+            const statusBar = document.getElementById('statusBar');
+            statusBar.innerHTML = '<strong>' + message + '</strong>';
+            statusBar.className = 'status-bar ' + type;
+        }
+
+        function enableButtons() {
+            document.querySelectorAll('.btn-capture, .btn-clear, .btn-remove, .btn-add-user').forEach(btn => {
+                btn.disabled = false;
+            });
+
+            // Add Enter key support for adding users
+            document.getElementById('newUserName').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    addUser();
+                }
+            });
+        }
+
+        async function captureSamples(userName) {
+            if (isCapturing) return;
+            
+            isCapturing = true;
+            const captureBtn = event.target;
+            const originalText = captureBtn.innerHTML;
+            
+            try {
+                const video = document.getElementById('webcam');
+                const targetSamples = 20;
+                let capturedCount = 0;
+
+                captureBtn.disabled = true;
+                updateStatus(`Fotos von ${userName} werden aufgenommen... Bleib ruhig stehen! 📸`, 'loading');
+
+                // Capture samples with a small delay between each
+                for (let i = 0; i < targetSamples; i++) {
+                    captureBtn.innerHTML = `📸 Foto ${i + 1}/${targetSamples}`;
+                    
+                    // Extract features using MobileNet
+                    const features = tf.tidy(() => {
+                        const img = tf.browser.fromPixels(video);
+                        const resized = tf.image.resizeBilinear(img, [224, 224]);
+                        const normalized = resized.div(127.5).sub(1.0);
+                        const batched = normalized.expandDims(0);
+                        return mobilenet.infer(batched, 'conv_preds');
+                    });
+
+                    trainingData[userName].push(features);
+                    capturedCount++;
+                    
+                    updateSampleCount(userName);
+                    
+                    // Small delay between captures
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+
+                updateStatus(`Super! ${targetSamples} Fotos von ${userName} wurden aufgenommen! 🎉`, 'ready');
+                captureBtn.innerHTML = originalText;
+                captureBtn.disabled = false;
+                
+                // Enable train button if we have samples
+                checkTrainEligibility();
+                
+            } catch (error) {
+                console.error('Capture error:', error);
+                updateStatus('Fehler beim Aufnehmen der Fotos: ' + error.message, 'error');
+                captureBtn.innerHTML = originalText;
+                captureBtn.disabled = false;
+            }
+            
+            isCapturing = false;
+        }
+
+        function clearSamples(userName) {
+            // Dispose of tensors to free memory
+            trainingData[userName].forEach(tensor => tensor.dispose());
+            trainingData[userName] = [];
+            updateSampleCount(userName);
+            checkTrainEligibility();
+            updateStatus(`Fotos von ${userName} wurden gelöscht`, 'ready');
+        }
+
+        function updateSampleCount(userName) {
+            const count = trainingData[userName].length;
+            document.getElementById(`count-${userName}`).textContent = `${count} Fotos`;
+        }
+
+        function checkTrainEligibility() {
+            const totalSamples = Object.values(trainingData).reduce((sum, arr) => sum + arr.length, 0);
+            const hasMultipleUsers = Object.values(trainingData).filter(arr => arr.length > 0).length >= 2;
+            
+            document.getElementById('trainBtn').disabled = !(totalSamples >= 20 && hasMultipleUsers);
+        }
+
+        async function trainModel() {
+            const trainBtn = document.getElementById('trainBtn');
+            trainBtn.disabled = true;
+            
+            // Get configuration values from sliders
+            const hiddenUnits1 = parseInt(document.getElementById('hiddenUnits1').value);
+            const hiddenUnits2 = parseInt(document.getElementById('hiddenUnits2').value);
+            const epochs = parseInt(document.getElementById('epochs').value);
+            const learningRate = parseFloat(document.getElementById('learningRate').value);
+            
+            updateStatus(`KI wird trainiert mit ${hiddenUnits1}→${hiddenUnits2} Neuronen, ${epochs} Runden... Die KI lernt jetzt! 🧠`, 'loading');
+            
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            progressBar.classList.add('active');
+
+            const startTime = Date.now();
+
+            try {
+                // Prepare training data
+                const xs = [];
+                const ys = [];
+
+                userLabels.forEach((label, labelIndex) => {
+                    trainingData[label].forEach(features => {
+                        xs.push(features);
+                        ys.push(labelIndex);
+                    });
+                });
+
+                // Stack all features into a single tensor and flatten them
+                const xsStacked = tf.stack(xs);
+                
+                // Flatten each sample's features to 1D
+                const xsTensor = tf.tidy(() => {
+                    const batchSize = xsStacked.shape[0];
+                    const featureSize = xsStacked.shape.slice(1).reduce((a, b) => a * b, 1);
+                    return xsStacked.reshape([batchSize, featureSize]);
+                });
+                
+                xsStacked.dispose();
+                
+                const ysTensor = tf.tidy(() => tf.oneHot(tf.tensor1d(ys, 'int32'), userLabels.length));
+
+                // Get the flattened feature size
+                const inputSize = xsTensor.shape[1];
+                console.log('Training config:', {hiddenUnits1, hiddenUnits2, epochs, learningRate, inputSize});
+
+                // Build model with configurable architecture
+                model = tf.sequential({
+                    layers: [
+                        tf.layers.dense({units: hiddenUnits1, activation: 'relu', inputShape: [inputSize]}),
+                        tf.layers.dropout({rate: 0.2}),
+                        tf.layers.dense({units: hiddenUnits2, activation: 'relu'}),
+                        tf.layers.dropout({rate: 0.2}),
+                        tf.layers.dense({units: userLabels.length, activation: 'softmax'})
+                    ]
+                });
+
+                model.compile({
+                    optimizer: tf.train.adam(learningRate),
+                    loss: 'categoricalCrossentropy',
+                    metrics: ['accuracy']
+                });
+
+                // Train the model with configurable epochs
+                await model.fit(xsTensor, ysTensor, {
+                    epochs: epochs,
+                    batchSize: 16,
+                    validationSplit: 0.2,
+                    shuffle: true,
+                    callbacks: {
+                        onEpochEnd: (epoch, logs) => {
+                            const progress = ((epoch + 1) / epochs * 100).toFixed(0);
+                            progressFill.style.width = progress + '%';
+                            progressFill.textContent = `${progress}% - Genauigkeit: ${(logs.acc * 100).toFixed(1)}%`;
+                        }
+                    }
+                });
+
+                // Cleanup
+                xsTensor.dispose();
+                ysTensor.dispose();
+
+                const trainingTime = ((Date.now() - startTime) / 1000).toFixed(1);
+                updateStatus(`Geschafft! Training dauerte ${trainingTime} Sekunden! Jetzt wird erkannt... 🎉`, 'ready');
+                progressBar.classList.remove('active');
+                
+                const modelStatus = document.getElementById('modelStatus');
+                modelStatus.style.display = 'block';
+                modelStatus.innerHTML = `✅ Modell trainiert: ${hiddenUnits1}→${hiddenUnits2} Neuronen, ${epochs} Runden (${trainingTime}s)`;
+                modelStatus.style.background = '#d4edda';
+                modelStatus.style.color = '#155724';
+
+                // Start real-time identification
+                startIdentification();
+
+            } catch (error) {
+                console.error('Training error:', error);
+                updateStatus('Fehler beim Training: ' + error.message, 'error');
+                trainBtn.disabled = false;
+                progressBar.classList.remove('active');
+            }
+        }
+
+        async function startIdentification() {
+            isIdentifying = true;
+            const overlay = document.getElementById('identificationOverlay');
+            overlay.classList.add('active');
+            
+            identifyLoop();
+        }
+
+        async function identifyLoop() {
+            if (!isIdentifying || !model) return;
+
+            const video = document.getElementById('webcam');
+            const overlay = document.getElementById('identificationOverlay');
+
+            try {
+                // Extract features using the same method as training
+                const features = tf.tidy(() => {
+                    const img = tf.browser.fromPixels(video);
+                    const resized = tf.image.resizeBilinear(img, [224, 224]);
+                    const normalized = resized.div(127.5).sub(1.0);
+                    const batched = normalized.expandDims(0);
+                    return mobilenet.infer(batched, 'conv_preds');
+                });
+
+                // Flatten features to match training format
+                const flattenedFeatures = tf.tidy(() => {
+                    const featureSize = features.shape.reduce((a, b) => a * b, 1);
+                    return features.reshape([1, featureSize]);
+                });
+
+                const prediction = model.predict(flattenedFeatures);
+                const probabilities = await prediction.data();
+                
+                // Cleanup tensors
+                features.dispose();
+                flattenedFeatures.dispose();
+                prediction.dispose();
+
+                // Get best prediction
+                let maxProb = 0;
+                let maxIndex = 0;
+                for (let i = 0; i < probabilities.length; i++) {
+                    if (probabilities[i] > maxProb) {
+                        maxProb = probabilities[i];
+                        maxIndex = i;
+                    }
+                }
+
+                // Display result
+                const confidence = (maxProb * 100).toFixed(1);
+                const threshold = 0.6;
+
+                console.log('Vorhersage:', userLabels[maxIndex], 'Sicherheit:', confidence + '%', 'Alle Werte:', Array.from(probabilities).map(p => (p * 100).toFixed(1)));
+
+                if (maxProb >= threshold) {
+                    const userName = userLabels[maxIndex];
+                    overlay.textContent = `✓ ${userName} (${confidence}%)`;
+                    overlay.className = 'identification-overlay active identified';
+                    
+                    // Highlight active user card
+                    document.querySelectorAll('.user-card').forEach(card => {
+                        card.classList.remove('active');
+                    });
+                    document.querySelector(`[data-user="${userName}"]`).classList.add('active');
+                } else {
+                    overlay.textContent = `? Unbekannte Person (${confidence}%)`;
+                    overlay.className = 'identification-overlay active unknown';
+                    document.querySelectorAll('.user-card').forEach(card => {
+                        card.classList.remove('active');
+                    });
+                }
+
+            } catch (error) {
+                console.error('Identification error:', error);
+                overlay.textContent = `⚠ Fehler: ${error.message}`;
+                overlay.className = 'identification-overlay active unknown';
+            }
+
+            // Continue loop with a small delay to avoid overwhelming the system
+            setTimeout(() => requestAnimationFrame(identifyLoop), 100);
+        }
+
+        // Start the application
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>

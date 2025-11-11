@@ -1,0 +1,590 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as tf from '@tensorflow/tfjs';
+import { RefreshCcw, Cpu, Loader2, Zap, ZoomIn } from 'lucide-react';
+
+// --- Constants ---
+const CANVAS_SIZE = 280;
+const MODEL_INPUT_SIZE = 28;
+const STROKE_COLOR = 'white';
+// Max stroke width
+const STROKE_WIDTH = 40; 
+
+// --- Core Tensor Function for Image Shifting (Replaces tf.image.translate) ---
+
+/**
+ * Shifts a single image tensor [1, 28, 28, 1] by tx and ty using slice and pad.
+ * This is the robust fix for the tf.image.translate failure.
+ * @param {tf.Tensor} inputTensor - The image tensor to shift.
+ * @param {number} tx - Translation in X (columns).
+ * @param {number} ty - Translation in Y (rows).
+ * @returns {tf.Tensor} The shifted and padded tensor.
+ */
+const shiftTensor = (inputTensor, tx, ty) => {
+  return tf.tidy(() => {
+    // inputTensor shape is [1, 28, 28, 1]. Squeeze to [28, 28, 1] for easier slicing.
+    const image = inputTensor.squeeze([0]);
+    const height = MODEL_INPUT_SIZE;
+    const width = MODEL_INPUT_SIZE;
+
+    // 1. Calculate slice parameters (how much to crop)
+    const beginY = ty > 0 ? ty : 0;
+    const beginX = tx > 0 ? tx : 0;
+    const sizeY = height - Math.abs(ty);
+    const sizeX = width - Math.abs(tx);
+
+    // 2. Slice the core part of the image
+    const sliced = image.slice([beginY, beginX, 0], [sizeY, sizeX, 1]);
+
+    // 3. Calculate pad parameters (how much to pad with black space)
+    const padTop = ty < 0 ? Math.abs(ty) : 0;
+    const padBottom = ty > 0 ? ty : 0;
+    const padLeft = tx < 0 ? Math.abs(tx) : 0;
+    const padRight = tx > 0 ? tx : 0;
+
+    // Pad with zeros (black)
+    const padded = sliced.pad([
+      [padTop, padBottom],
+      [padLeft, padRight],
+      [0, 0]
+    ]);
+    
+    // Unsqueeze back to [1, 28, 28, 1]
+    return padded.expandDims(0);
+  });
+};
+
+
+// --- Helper Functions (Moved outside App for efficiency) ---
+
+/**
+ * Defines and compiles the Convolutional Neural Network (CNN) model.
+ */
+const defineModel = (forTraining = false) => {
+  const newModel = tf.sequential();
+  // Final, conservative learning rate with Momentum to ensure fine steps
+  const LEARNING_RATE = 0.001; 
+  const MOMENTUM = 0.9; 
+
+  // The final, robust architecture
+  newModel.add(tf.layers.conv2d({
+    inputShape: [MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1],
+    kernelSize: 5,
+    filters: 32, 
+    activation: 'relu',
+  }));
+  newModel.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
+  newModel.add(tf.layers.conv2d({
+    kernelSize: 3, 
+    filters: 64, 
+    activation: 'relu',
+  }));
+  newModel.add(tf.layers.conv2d({
+    kernelSize: 3, 
+    filters: 128, 
+    activation: 'relu',
+  }));
+  
+  newModel.add(tf.layers.flatten());
+  newModel.add(tf.layers.dropout({ rate: 0.4 })); 
+  newModel.add(tf.layers.dense({
+    units: 10,
+    activation: 'softmax'
+  }));
+
+  // *** CRITICAL CHANGE: Switched to Momentum Optimizer ***
+  newModel.compile({
+    optimizer: tf.train.momentum(LEARNING_RATE, MOMENTUM),
+    loss: 'categoricalCrossentropy',
+    metrics: ['accuracy']
+  });
+
+  return newModel;
+};
+
+/**
+ * Handles loading of the MNIST dataset from Google Storage.
+ */
+class MnistData {
+  constructor() {
+    this.dataset = null;
+    this.labels = null;
+    this.numExamples = 65000;
+  }
+
+  async load() {
+    const dataUrl = 'https://storage.googleapis.com/learnjs-data/model-builder/mnist_images.png';
+    const labelsUrl = 'https://storage.googleapis.com/learnjs-data/model-builder/mnist_labels_uint8';
+
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const imgRequest = new Promise(resolve => {
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const width = img.naturalWidth;
+        const height = img.naturalHeight;
+        
+        canvas.width = width;
+        canvas.height = height;
+        
+        const datasetBytesBuffer = new ArrayBuffer(width * height * 4);
+        const datasetBytesView = new Uint8Array(datasetBytesBuffer);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        let i = 0;
+        for (let j = 0; j < imageData.data.length; j += 4) {
+          datasetBytesView[i++] = imageData.data[j];
+        }
+        
+        this.dataset = datasetBytesView;
+        resolve();
+      };
+      img.onerror = (e) => {
+        console.error("Image load error:", e);
+        resolve();
+      };
+      img.src = dataUrl;
+    });
+
+    const labelRequest = tf.util.fetch(labelsUrl, { method: 'GET' });
+    
+    await imgRequest;
+    const labelResponse = await labelRequest;
+    this.labels = new Uint8Array(await labelResponse.arrayBuffer());
+  }
+
+  getTrainData(numExamples) {
+    const imageSize = 28 * 28;
+    const startIndex = 0; 
+    
+    numExamples = Math.min(numExamples, Math.floor(this.dataset.length / imageSize));
+
+    const imageSlice = this.dataset.slice(
+      startIndex * imageSize, 
+      (startIndex + numExamples) * imageSize
+    );
+    const labelSlice = this.labels.slice(
+      startIndex, 
+      startIndex + numExamples
+    );
+
+    // X: Images (normalized to 0.0-1.0, where 1.0 is the digit)
+    const x_train = tf.tensor4d(imageSlice, [numExamples, 28, 28, 1]).div(255.0);
+
+    // Y: Labels (one-hot encoded)
+    const rawLabelsTensor = tf.tensor1d(labelSlice, 'int32');
+    const y_train = tf.oneHot(rawLabelsTensor, 10);
+    
+    rawLabelsTensor.dispose(); 
+    
+    return [x_train, y_train];
+  }
+}
+
+// --- Main Component (Renamed to App) ---
+
+export default function App() {
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [model, setModel] = useState(null);
+  const [prediction, setPrediction] = useState('—');
+  const [statusMessage, setStatusMessage] = useState('Loading...');
+  const [trainingMessage, setTrainingMessage] = useState('(Using UNTRAINED model - results may be random)');
+  const [modelState, setModelState] = useState('UNTRAINED');
+  const [trainButtonText, setTrainButtonText] = useState('Train Model (MNIST Data)');
+  const [trainButtonDisabled, setTrainButtonDisabled] = useState(false);
+  const [debugImage, setDebugImage] = useState(null); // New state for debug image
+
+  const lastPosRef = useRef({ x: 0, y: 0 });
+
+  // 1. Initial Setup and Canvas Initialization
+  useEffect(() => {
+    // Initialize Model
+    const initModel = async () => {
+      const newModel = defineModel(false);
+      setModel(newModel);
+      setStatusMessage('Untrained model ready. Draw a digit.');
+    };
+    initModel();
+    
+    // Initialize Canvas (must be done after component mount)
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      // Set initial background to black
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    }
+  }, []);
+
+  // 2. Utility function to get cursor/touch position relative to canvas
+  const getPosition = useCallback((e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.clientX !== undefined ? e.clientX : e.touches?.[0]?.clientX;
+    const clientY = e.clientY !== undefined ? e.clientY : e.touches?.[0]?.clientY; 
+    
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top
+    };
+  }, []);
+
+  // 3. Drawing Handlers
+  const startDrawing = (e) => {
+    e.preventDefault();
+    setIsDrawing(true);
+    const pos = getPosition(e);
+    lastPosRef.current = pos;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();
+    ctx.fillStyle = STROKE_COLOR;
+    ctx.arc(pos.x, pos.y, STROKE_WIDTH / 2, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    e.preventDefault();
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const pos = getPosition(e);
+    
+    ctx.beginPath();
+    ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.lineWidth = STROKE_WIDTH;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = STROKE_COLOR;
+    ctx.stroke();
+    
+    lastPosRef.current = pos;
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  // 4. Action Handlers
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    setPrediction('—');
+    setStatusMessage(`Canvas cleared. Current model: ${modelState}`);
+    setDebugImage(null); // Clear debug image too
+  };
+
+  /**
+   * Generates the preprocessed 28x28 grayscale tensor.
+   */
+  const getPreprocessedTensor = async (canvas) => {
+    // 1. Find Bounding Box (Uses BRIGHTNESS_THRESHOLD to ignore noise)
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = CANVAS_SIZE;
+    tempCanvas.height = CANVAS_SIZE;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(canvas, 0, 0);
+
+    const imageData = tempCtx.getImageData(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    const data = imageData.data;
+
+    let minX = CANVAS_SIZE, maxX = 0, minY = CANVAS_SIZE, maxY = 0;
+    let found = false;
+    const BRIGHTNESS_THRESHOLD = 50; 
+
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] > BRIGHTNESS_THRESHOLD) { 
+        found = true;
+        const x = (i / 4) % CANVAS_SIZE;
+        const y = Math.floor((i / 4) / CANVAS_SIZE);
+
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
+    if (!found) {
+        setDebugImage(null);
+        return tf.zeros([1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 1]);
+    }
+    
+    // Aggressively tight border
+    const border = Math.floor(CANVAS_SIZE * 0.05); 
+    minX = Math.max(0, minX - border);
+    maxX = Math.min(CANVAS_SIZE, maxX + border);
+    minY = Math.max(0, minY - border);
+    maxY = Math.min(CANVAS_SIZE, maxY + border);
+
+    const cropWidth = maxX - minX;
+    const cropHeight = maxY - minY;
+    
+    // Aggressive scaling parameters
+    const TARGET_DIGIT_SIZE = 24; 
+    const PADDING = 2;
+
+    // 2. Create final 28x28 canvas for scaling and centering
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = MODEL_INPUT_SIZE;
+    finalCanvas.height = MODEL_INPUT_SIZE;
+    const finalCtx = finalCanvas.getContext('2d');
+    
+    finalCtx.fillStyle = '#000';
+    finalCtx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+
+    const ratio = TARGET_DIGIT_SIZE / Math.max(cropWidth, cropHeight);
+    const scaledWidth = cropWidth * ratio;
+    const scaledHeight = cropHeight * ratio;
+
+    const destX = PADDING + (TARGET_DIGIT_SIZE - scaledWidth) / 2;
+    const destY = PADDING + (TARGET_DIGIT_SIZE - scaledHeight) / 2;
+
+    finalCtx.drawImage(
+      canvas,
+      minX, minY, cropWidth, cropHeight,
+      destX, destY, scaledWidth, scaledHeight
+    );
+
+    // 3. Convert to Tensor and Normalize (Grayscale output)
+    let processedTensor = tf.tidy(() => {
+        let tensor = tf.browser.fromPixels(finalCanvas, 1);
+        return tf.cast(tensor, 'float32').div(255.0); 
+    });
+
+    // 4. Update Debug Image (Must happen before tensor is returned)
+    const normalizedData = await processedTensor.data();
+    const debugImageData = finalCtx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+    const debugData = debugImageData.data;
+
+    for (let i = 0; i < normalizedData.length; i++) {
+        const val = normalizedData[i] * 255;
+        const idx = i * 4;
+        debugData[idx] = val; 
+        debugData[idx + 1] = val;
+        debugData[idx + 2] = val;
+        debugData[idx + 3] = 255; // Alpha
+    }
+    finalCtx.putImageData(debugImageData, 0, 0);
+    setDebugImage(finalCanvas.toDataURL());
+
+    return processedTensor.expandDims(0); // [1, 28, 28, 1]
+  };
+
+
+  const predictDigit = async () => {
+    if (!model) {
+      setStatusMessage('Error: Model not loaded.');
+      return;
+    }
+
+    setStatusMessage('Making prediction...');
+    setPrediction('...');
+    setDebugImage(null); 
+
+    let predictedClass = 0;
+    let confidence = 0;
+    
+    const inputTensor = await getPreprocessedTensor(canvasRef.current);
+    
+    tf.tidy(() => {
+      // FIX: Use core tensor shift function instead of the buggy tf.image.translate
+      const tx = Math.floor(Math.random() * 3) - 1; // -1, 0, 1
+      const ty = Math.floor(Math.random() * 3) - 1; // -1, 0, 1
+      
+      // Use the robust core tensor shifting function
+      const augmentedTensor = shiftTensor(inputTensor, tx, ty);
+
+      // 1. Predict using the augmented input
+      const resultTensor = model.predict(augmentedTensor);
+      
+      // 2. Extract results
+      const probabilities = resultTensor.dataSync();
+      predictedClass = tf.argMax(resultTensor, -1).dataSync()[0];
+      confidence = probabilities[predictedClass] * 100;
+      
+      // Dispose of the temporarily created augmented tensor
+      augmentedTensor.dispose();
+    });
+
+    inputTensor.dispose(); 
+    
+    const confidenceMessage = (modelState === 'UNTRAINED')
+      ? `Random guess: ${confidence.toFixed(2)}%`
+      : `Confidence: ${confidence.toFixed(2)}%`;
+
+    setPrediction(predictedClass.toString());
+    setStatusMessage(`Predicted ${predictedClass} - ${confidenceMessage}`);
+  };
+
+  const loadAndTrainModel = async () => {
+    setTrainButtonDisabled(true);
+    setTrainButtonText('Loading and Training...');
+    setTrainingMessage('Training is in progress (15 epochs)...'); // Increased epochs
+    setStatusMessage('Fetching MNIST data (approx 5MB)...');
+    
+    // Dispose of any existing model before creating a new one
+    if (model) {
+        model.dispose();
+    }
+
+    try {
+      const data = new MnistData();
+      await data.load();
+      
+      const numExamples = 15000; // Increased training data
+      const [x_train, y_train] = data.getTrainData(numExamples);
+      
+      const newModel = defineModel(true);
+      setModel(newModel);
+
+      setStatusMessage(`Training on ${numExamples} samples...`);
+      const history = await newModel.fit(x_train, y_train, {
+        batchSize: 128,
+        epochs: 15, // Increased epochs
+        shuffle: true,
+        callbacks: {
+          onEpochEnd: async (epoch, logs) => {
+            setStatusMessage(`Epoch ${epoch + 1}/15 - Loss: ${logs.loss.toFixed(4)}, Accuracy: ${(logs.acc * 100).toFixed(2)}%`);
+            await tf.nextFrame();
+          }
+        }
+      });
+
+      x_train.dispose();
+      y_train.dispose();
+
+      setModelState('TRAINED');
+      const finalAccuracy = (history.history.acc[history.history.acc.length - 1] * 100).toFixed(2);
+      setStatusMessage(`Training complete! Final Accuracy: ${finalAccuracy}%`);
+      setTrainingMessage(`Model is now TRAINED!`);
+      setTrainButtonText(`Model Trained (${finalAccuracy}% Acc)`);
+    } catch (error) {
+      console.error("Training failed:", error);
+      setStatusMessage('Error during training. Check console for details.');
+      setTrainButtonDisabled(false);
+      setTrainButtonText('Train Model (MNIST Data)');
+      setTrainingMessage('(Model reverted to UNTRAINED state)');
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-8 bg-gray-50 font-sans">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl p-6 sm:p-8">
+        <h1 className="text-3xl font-extrabold text-gray-900 text-center mb-2 flex items-center justify-center">
+          <Cpu className="w-8 h-8 mr-2 text-blue-600" />
+          CNN Digit Recognizer
+        </h1>
+        
+        <p className="text-center text-gray-600 mb-6 text-sm">
+          Draw a single digit (0-9) inside the box.
+        </p>
+
+        {/* Canvas Area */}
+        <div className="flex justify-center mb-6">
+          <canvas
+            ref={canvasRef}
+            width={CANVAS_SIZE}
+            height={CANVAS_SIZE}
+            onMouseDown={startDrawing}
+            onMouseMove={draw}
+            onMouseUp={stopDrawing}
+            onMouseLeave={stopDrawing}
+            onTouchStart={startDrawing}
+            onTouchMove={draw}
+            onTouchEnd={stopDrawing}
+            className="border-4 border-blue-500 cursor-crosshair bg-black rounded-xl shadow-2xl transition duration-300 hover:shadow-3xl"
+            style={{ touchAction: 'none' }}
+          />
+        </div>
+
+        {/* Prediction Display */}
+        <div className="flex flex-col sm:flex-row gap-6 mb-6">
+            {/* Prediction Result */}
+            <div className="flex-1 text-center p-4 border-2 border-dashed border-gray-300 rounded-xl bg-indigo-50/50">
+                <h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center justify-center">
+                    <Zap className="w-5 h-5 mr-1 text-yellow-500" />
+                    Prediction:
+                </h3>
+                <p className="text-7xl font-extrabold text-indigo-700 tracking-tight leading-none">
+                    {prediction}
+                </p>
+            </div>
+
+            {/* Debug Image (Pre-processed Input) */}
+            <div className="flex-1 text-center p-4 border-2 border-dashed border-gray-300 rounded-xl bg-gray-100/50">
+                <h3 className="text-xl font-semibold text-gray-700 mb-2 flex items-center justify-center">
+                    <ZoomIn className="w-5 h-5 mr-1 text-gray-500" />
+                    Pre-processed Input (28x28):
+                </h3>
+                <div className="flex justify-center">
+                    {debugImage ? (
+                        <img 
+                            src={debugImage} 
+                            alt="28x28 Pre-processed Digit Input"
+                            style={{ imageRendering: 'pixelated' }}
+                            className="w-20 h-20 border-2 border-gray-600 bg-black"
+                        />
+                    ) : (
+                        <div className="w-20 h-20 border-2 border-gray-600 bg-black text-xs flex items-center justify-center text-gray-400">
+                            Draw/Predict
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-3 sm:gap-4 mb-4 flex-wrap">
+          <button
+            onClick={predictDigit}
+            className="flex-1 min-w-[120px] px-4 py-3 text-lg font-bold rounded-xl border-none cursor-pointer transition duration-150 ease-in-out shadow-md bg-indigo-600 text-white hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/50"
+          >
+            Predict
+          </button>
+          
+          <button
+            onClick={clearCanvas}
+            className="flex-1 min-w-[120px] px-4 py-3 text-lg font-bold rounded-xl border-none cursor-pointer transition duration-150 ease-in-out shadow-md bg-gray-200 text-gray-800 hover:bg-gray-300 focus:outline-none focus:ring-4 focus:ring-gray-400/50 flex items-center justify-center"
+          >
+            <RefreshCcw className="w-4 h-4 mr-1" />
+            Clear
+          </button>
+        </div>
+        
+        {/* Training Button */}
+        <button
+          onClick={loadAndTrainModel}
+          disabled={trainButtonDisabled}
+          className={`w-full px-4 py-3 text-lg font-bold rounded-xl border-none transition duration-200 ease-in-out shadow-md mb-4
+            ${trainButtonDisabled 
+              ? 'bg-gray-400 text-white cursor-not-allowed' 
+              : 'bg-green-600 text-white hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-500/50'
+            }
+          `}
+        >
+          {trainButtonText}
+          {trainButtonDisabled && <Loader2 className="w-5 h-5 ml-2 inline animate-spin" />}
+        </button>
+
+        {/* Status Messages */}
+        <div className="text-center">
+          <p className="text-sm font-medium text-gray-600 min-h-[20px] mb-1">
+            {statusMessage}
+          </p>
+          <p className={`text-sm font-semibold min-h-[20px] ${modelState === 'TRAINED' ? 'text-green-600' : 'text-red-500'}`}>
+            {trainingMessage}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

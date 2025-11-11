@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Rubik's Cube Solver with Camera</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+            height: 100vh;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        #canvas-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #controls {
+            width: 350px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        
+        .section {
+            margin-bottom: 25px;
+        }
+        
+        .section h2 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+        
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        
+        button {
+            padding: 10px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button.full-width {
+            grid-column: 1 / -1;
+        }
+        
+        button.danger {
+            background: #e74c3c;
+        }
+        
+        button.danger:hover {
+            background: #c0392b;
+        }
+        
+        button.success {
+            background: #27ae60;
+        }
+        
+        button.success:hover {
+            background: #229954;
+        }
+
+        button.warning {
+            background: #f39c12;
+        }
+
+        button.warning:hover {
+            background: #e67e22;
+        }
+        
+        #solution-steps {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            min-height: 100px;
+        }
+        
+        #solution-steps p {
+            margin: 5px 0;
+            color: #666;
+        }
+        
+        .step {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-left: 4px solid #667eea;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .step:hover {
+            background: #e8eaf6;
+            transform: translateX(5px);
+        }
+        
+        .step.current {
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }
+
+        .step.executing {
+            background: #f39c12;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .info {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #1976d2;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px 40px;
+            border-radius: 10px;
+            display: none;
+            z-index: 1000;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .legend {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+            line-height: 1.6;
+        }
+
+        #camera-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #camera-modal.active {
+            display: flex;
+        }
+
+        #camera-content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 90%;
+            max-height: 90%;
+            overflow: auto;
+        }
+
+        #video-container {
+            position: relative;
+            display: inline-block;
+            max-width: 640px;
+        }
+
+        #video {
+            width: 100%;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+
+        #camera-canvas {
+            display: none;
+        }
+
+        .scanning-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40%;
+            height: 40%;
+            pointer-events: none;
+        }
+
+        .scanning-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 3%;
+            width: 100%;
+            height: 100%;
+        }
+
+        .scanning-cell {
+            border: 3px solid rgba(255, 255, 255, 0.9);
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+            transition: background-color 0.1s;
+        }
+
+        .color-preview-overlay {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 10px;
+            display: grid;
+            grid-template-columns: repeat(3, 30px);
+            gap: 3px;
+        }
+
+        .preview-cell {
+            width: 30px;
+            height: 30px;
+            border: 2px solid white;
+            border-radius: 4px;
+        }
+
+        .face-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 40px);
+            gap: 2px;
+            margin: 10px 0;
+            justify-content: center;
+        }
+
+        .face-sticker {
+            width: 40px;
+            height: 40px;
+            border: 2px solid #333;
+            border-radius: 3px;
+        }
+
+        .scan-instructions {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            color: #856404;
+            font-weight: bold;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .scan-instructions-detail {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            color: #1976d2;
+            font-size: 14px;
+        }
+
+        .face-preview {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .face-label {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #667eea;
+        }
+
+        .camera-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 15px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #27ae60);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <div id="loading">
+                <div class="spinner"></div>
+                <p>Calculating solution...</p>
+            </div>
+        </div>
+        <div id="controls">
+            <h1>🎲 Rubik's Cube Solver</h1>
+            
+            <div class="section">
+                <h2>📸 Scan Real Cube</h2>
+                <button onclick="startCameraScan()" class="full-width warning">📷 Scan with Camera</button>
+                <div class="info">
+                    📱 Hold your cube up to the camera and scan all 6 faces!
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Manual Moves</h2>
+                <div class="button-group">
+                    <button onclick="rotateFace('U')">U</button>
+                    <button onclick="rotateFace('D')">D</button>
+                    <button onclick="rotateFace('F')">F</button>
+                    <button onclick="rotateFace('B')">B</button>
+                    <button onclick="rotateFace('L')">L</button>
+                    <button onclick="rotateFace('R')">R</button>
+                    <button onclick="rotateFace('U', true)">U'</button>
+                    <button onclick="rotateFace('D', true)">D'</button>
+                    <button onclick="rotateFace('F', true)">F'</button>
+                    <button onclick="rotateFace('B', true)">B'</button>
+                    <button onclick="rotateFace('L', true)">L'</button>
+                    <button onclick="rotateFace('R', true)">R'</button>
+                </div>
+                <div class="legend">
+                    U=Up, D=Down, F=Front, B=Back, L=Left, R=Right<br>
+                    ' = Counter-clockwise
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>Actions</h2>
+                <button onclick="scrambleCube()" class="full-width">🎲 Scramble Cube</button>
+                <button onclick="solveCube()" class="full-width success">🤖 Solve Cube</button>
+                <button onclick="resetCube()" class="full-width danger">↺ Reset to Solved</button>
+            </div>
+            
+            <div class="section">
+                <h2>Solution Steps</h2>
+                <div id="solution-steps">
+                    <p>Click "Solve Cube" to see the solution steps.</p>
+                </div>
+                <div class="info">
+                    💡 Click on any step to execute it on the cube
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camera Modal -->
+    <div id="camera-modal">
+        <div id="camera-content">
+            <h2 style="color: #667eea; text-align: center;">Scan Your Rubik's Cube</h2>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="scan-progress" style="width: 0%;">
+                    0/6 Faces
+                </div>
+            </div>
+
+            <div class="scan-instructions" id="current-face-instruction">
+                Position the WHITE face in the grid
+            </div>
+
+            <div class="scan-instructions-detail">
+                • Center the face in the dotted grid overlay<br>
+                • Ensure good lighting - avoid shadows<br>
+                • Hold the cube steady<br>
+                • All 9 stickers should be clearly visible
+            </div>
+
+            <div id="video-container">
+                <video id="video" autoplay playsinline></video>
+                <div class="scanning-overlay">
+                    <div class="scanning-grid">
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                        <div class="scanning-cell"></div>
+                    </div>
+                </div>
+                <div class="color-preview-overlay" id="color-preview">
+                    <!-- Live color preview will appear here -->
+                </div>
+            </div>
+            <canvas id="camera-canvas"></canvas>
+
+            <div class="camera-buttons">
+                <button onclick="captureFace()" class="success" style="font-size: 16px; padding: 15px 30px;">
+                    📸 Capture This Face
+                </button>
+                <button onclick="closeCameraModal()" class="danger">✕ Close</button>
+            </div>
+
+            <div id="scanned-faces" style="margin-top: 20px;"></div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, cubeGroup;
+        let cubelets = [];
+        let isAnimating = false;
+        let currentMoveQueue = [];
+        let isSolving = false;
+        
+        const CUBELET_SPACING = 1.05;
+        const CUBELET_SIZE = 1.0;
+        
+        const colors = {
+            white: 0xFFFFFF,
+            yellow: 0xFFFF00,
+            green: 0x00FF00,
+            blue: 0x0000FF,
+            orange: 0xFF8800,
+            red: 0xFF0000,
+            black: 0x000000
+        };
+
+        let cubeState = {
+            U: ['W','W','W','W','W','W','W','W','W'],
+            D: ['Y','Y','Y','Y','Y','Y','Y','Y','Y'],
+            F: ['G','G','G','G','G','G','G','G','G'],
+            B: ['B','B','B','B','B','B','B','B','B'],
+            L: ['O','O','O','O','O','O','O','O','O'],
+            R: ['R','R','R','R','R','R','R','R','R']
+        };
+
+        let moveHistory = [];
+
+        // Camera scanning variables
+        let videoStream = null;
+        let scannedFaces = [];
+        const faceOrder = ['U', 'D', 'F', 'B', 'L', 'R'];
+        const faceInstructions = [
+            'Position the WHITE face (top) in the grid',
+            'Position the YELLOW face (bottom) in the grid',
+            'Position the GREEN face (front) in the grid',
+            'Position the BLUE face (back) in the grid',
+            'Position the ORANGE face (left) in the grid',
+            'Position the RED face (right) in the grid'
+        ];
+        let currentFaceIndex = 0;
+        let previewInterval = null;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x667eea);
+            
+            const canvasContainer = document.getElementById('canvas-container');
+            
+            camera = new THREE.PerspectiveCamera(50, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 1000);
+            camera.position.set(7, 7, 7);
+            camera.lookAt(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            canvasContainer.appendChild(renderer.domElement);
+            
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const light1 = new THREE.DirectionalLight(0xffffff, 1.0);
+            light1.position.set(10, 10, 10);
+            scene.add(light1);
+            
+            const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            light2.position.set(-10, 10, 10);
+            scene.add(light2);
+            
+            cubeGroup = new THREE.Group();
+            scene.add(cubeGroup);
+            
+            createRubiksCube();
+            
+            window.addEventListener('resize', onWindowResize);
+            
+            let isDragging = false;
+            let previousMousePosition = { x: 0, y: 0 };
+            
+            canvasContainer.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                previousMousePosition = { x: e.clientX, y: e.clientY };
+            });
+            
+            canvasContainer.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    const deltaX = e.clientX - previousMousePosition.x;
+                    const deltaY = e.clientY - previousMousePosition.y;
+                    
+                    cubeGroup.rotation.y += deltaX * 0.01;
+                    cubeGroup.rotation.x += deltaY * 0.01; 
+                    
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
+                }
+            });
+            
+            canvasContainer.addEventListener('mouseup', () => { isDragging = false; });
+            canvasContainer.addEventListener('mouseleave', () => { isDragging = false; });
+            
+            animate();
+        }
+        
+        function createRubiksCube() {
+            cubelets = [];
+            cubeGroup.clear();
+            
+            const size = CUBELET_SIZE;
+            
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    for (let z = -1; z <= 1; z++) {
+                        const cubelet = createCubelet(x, y, z, size);
+                        cubelet.position.set(
+                            x * CUBELET_SPACING,
+                            y * CUBELET_SPACING,
+                            z * CUBELET_SPACING
+                        );
+                        cubeGroup.add(cubelet);
+                        cubelets.push(cubelet);
+                    }
+                }
+            }
+        }
+        
+        function createCubelet(cx, cy, cz, size) {
+            const geometry = new THREE.BoxGeometry(size, size, size);
+            
+            const material = new THREE.MeshLambertMaterial({ color: colors.black });
+            const cubelet = new THREE.Mesh(geometry, material);
+            cubelet.scale.setScalar(0.95);
+            
+            const stickerSize = size * 0.95;
+            const offset = (size / 2) + 0.001;
+            
+            if (cx === 1) {
+                const sticker = createSticker(stickerSize, colors.red);
+                sticker.position.set(offset, 0, 0);
+                sticker.rotation.y = Math.PI / 2;
+                cubelet.add(sticker);
+            }
+            
+            if (cx === -1) {
+                const sticker = createSticker(stickerSize, colors.orange);
+                sticker.position.set(-offset, 0, 0);
+                sticker.rotation.y = -Math.PI / 2;
+                cubelet.add(sticker);
+            }
+            
+            if (cy === 1) {
+                const sticker = createSticker(stickerSize, colors.white);
+                sticker.position.set(0, offset, 0);
+                sticker.rotation.x = -Math.PI / 2;
+                cubelet.add(sticker);
+            }
+            
+            if (cy === -1) {
+                const sticker = createSticker(stickerSize, colors.yellow);
+                sticker.position.set(0, -offset, 0);
+                sticker.rotation.x = Math.PI / 2;
+                cubelet.add(sticker);
+            }
+            
+            if (cz === 1) {
+                const sticker = createSticker(stickerSize, colors.green);
+                sticker.position.set(0, 0, offset);
+                cubelet.add(sticker);
+            }
+            
+            if (cz === -1) {
+                const sticker = createSticker(stickerSize, colors.blue);
+                sticker.position.set(0, 0, -offset);
+                sticker.rotation.y = Math.PI;
+                cubelet.add(sticker);
+            }
+            
+            return cubelet;
+        }
+        
+        function createSticker(size, color) {
+            const geometry = new THREE.PlaneGeometry(size, size);
+            const material = new THREE.MeshLambertMaterial({ 
+                color: color,
+                side: THREE.DoubleSide
+            });
+            return new THREE.Mesh(geometry, material);
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+            
+            if (!isAnimating && currentMoveQueue.length > 0) {
+                const nextMove = currentMoveQueue.shift();
+                executeMove(nextMove.face, nextMove.prime);
+            }
+        }
+        
+        function onWindowResize() {
+            const canvasContainer = document.getElementById('canvas-container');
+            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        }
+        
+        function rotateFace(face, prime = false) {
+            if (isAnimating) return;
+            currentMoveQueue.push({ face, prime });
+            updateCubeState(face, prime);
+            if (!isSolving) {
+                moveHistory.push({ face, prime });
+            }
+        }
+        
+        function executeMove(face, prime = false) {
+            isAnimating = true;
+            
+            const toRotate = getCubeletsForFace(face);
+            
+            const rotationGroup = new THREE.Group();
+            cubeGroup.add(rotationGroup); 
+            
+            toRotate.forEach(cubelet => {
+                cubeGroup.remove(cubelet);
+                rotationGroup.add(cubelet);
+            });
+            
+            const axis = getRotationAxis(face);
+            const angle = prime ? -Math.PI / 2 : Math.PI / 2; 
+            
+            const duration = 300;
+            const startTime = Date.now();
+            
+            function animateRotation() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                rotationGroup.rotation[axis] = angle * progress;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animateRotation);
+                } else {
+                    rotationGroup.updateWorldMatrix(true, true); 
+                    
+                    const inverseCubeGroupMatrix = new THREE.Matrix4().copy(cubeGroup.matrixWorld).invert();
+
+                    const roundToSpacing = (value) => {
+                        const count = Math.round(value / CUBELET_SPACING);
+                        return Math.round(count * CUBELET_SPACING * 10000) / 10000; 
+                    }
+
+                    toRotate.forEach(cubelet => {
+                        cubelet.applyMatrix4(rotationGroup.matrixWorld);
+                        rotationGroup.remove(cubelet);
+                        cubelet.applyMatrix4(inverseCubeGroupMatrix);
+                        cubeGroup.add(cubelet);
+                        
+                        cubelet.position.x = roundToSpacing(cubelet.position.x);
+                        cubelet.position.y = roundToSpacing(cubelet.position.y);
+                        cubelet.position.z = roundToSpacing(cubelet.position.z);
+                    });
+                    
+                    cubeGroup.remove(rotationGroup); 
+                    
+                    isAnimating = false;
+                }
+            }
+            
+            animateRotation();
+        }
+        
+        function getCubeletsForFace(face) {
+            const threshold = 0.5; 
+            return cubelets.filter(cubelet => {
+                const pos = cubelet.position; 
+                
+                switch(face) {
+                    case 'U': return pos.y > threshold;
+                    case 'D': return pos.y < -threshold;
+                    case 'F': return pos.z > threshold;
+                    case 'B': return pos.z < -threshold;
+                    case 'L': return pos.x < -threshold;
+                    case 'R': return pos.x > threshold;
+                }
+                return false;
+            });
+        }
+        
+        function getRotationAxis(face) {
+            switch(face) {
+                case 'U':
+                case 'D':
+                    return 'y';
+                case 'F':
+                case 'B':
+                    return 'z';
+                case 'L':
+                case 'R':
+                    return 'x';
+            }
+        }
+
+        function updateCubeState(face, prime = false) {
+            const rotateArray = (arr, clockwise) => {
+                if (clockwise) {
+                    return [arr[6], arr[3], arr[0], arr[7], arr[4], arr[1], arr[8], arr[5], arr[2]];
+                } else {
+                    return [arr[2], arr[5], arr[8], arr[1], arr[4], arr[7], arr[0], arr[3], arr[6]];
+                }
+            };
+
+            const state = cubeState;
+
+            switch(face) {
+                case 'U':
+                    state.U = rotateArray(state.U, !prime);
+                    if (!prime) {
+                        let temp = [state.F[0], state.F[1], state.F[2]];
+                        state.F[0] = state.R[0]; state.F[1] = state.R[1]; state.F[2] = state.R[2];
+                        state.R[0] = state.B[0]; state.R[1] = state.B[1]; state.R[2] = state.B[2];
+                        state.B[0] = state.L[0]; state.B[1] = state.L[1]; state.B[2] = state.L[2];
+                        state.L[0] = temp[0]; state.L[1] = temp[1]; state.L[2] = temp[2];
+                    } else {
+                        let temp = [state.F[0], state.F[1], state.F[2]];
+                        state.F[0] = state.L[0]; state.F[1] = state.L[1]; state.F[2] = state.L[2];
+                        state.L[0] = state.B[0]; state.L[1] = state.B[1]; state.L[2] = state.B[2];
+                        state.B[0] = state.R[0]; state.B[1] = state.R[1]; state.B[2] = state.R[2];
+                        state.R[0] = temp[0]; state.R[1] = temp[1]; state.R[2] = temp[2];
+                    }
+                    break;
+
+                case 'D':
+                    state.D = rotateArray(state.D, !prime);
+                    if (!prime) {
+                        let temp = [state.F[6], state.F[7], state.F[8]];
+                        state.F[6] = state.L[6]; state.F[7] = state.L[7]; state.F[8] = state.L[8];
+                        state.L[6] = state.B[6]; state.L[7] = state.B[7]; state.L[8] = state.B[8];
+                        state.B[6] = state.R[6]; state.B[7] = state.R[7]; state.B[8] = state.R[8];
+                        state.R[6] = temp[0]; state.R[7] = temp[1]; state.R[8] = temp[2];
+                    } else {
+                        let temp = [state.F[6], state.F[7], state.F[8]];
+                        state.F[6] = state.R[6]; state.F[7] = state.R[7]; state.F[8] = state.R[8];
+                        state.R[6] = state.B[6]; state.R[7] = state.B[7]; state.R[8] = state.B[8];
+                        state.B[6] = state.L[6]; state.B[7] = state.L[7]; state.B[8] = state.L[8];
+                        state.L[6] = temp[0]; state.L[7] = temp[1]; state.L[8] = temp[2];
+                    }
+                    break;
+
+                case 'F':
+                    state.F = rotateArray(state.F, !prime);
+                    if (!prime) {
+                        let temp = [state.U[6], state.U[7], state.U[8]];
+                        state.U[6] = state.L[8]; state.U[7] = state.L[5]; state.U[8] = state.L[2];
+                        state.L[2] = state.D[0]; state.L[5] = state.D[1]; state.L[8] = state.D[2];
+                        state.D[0] = state.R[6]; state.D[1] = state.R[3]; state.D[2] = state.R[0];
+                        state.R[0] = temp[0]; state.R[3] = temp[1]; state.R[6] = temp[2];
+                    } else {
+                        let temp = [state.U[6], state.U[7], state.U[8]];
+                        state.U[6] = state.R[0]; state.U[7] = state.R[3]; state.U[8] = state.R[6];
+                        state.R[0] = state.D[2]; state.R[3] = state.D[1]; state.R[6] = state.D[0];
+                        state.D[0] = state.L[2]; state.D[1] = state.L[5]; state.D[2] = state.L[8];
+                        state.L[2] = temp[2]; state.L[5] = temp[1]; state.L[8] = temp[0];
+                    }
+                    break;
+
+                case 'B':
+                    state.B = rotateArray(state.B, !prime);
+                    if (!prime) {
+                        let temp = [state.U[0], state.U[1], state.U[2]];
+                        state.U[0] = state.R[2]; state.U[1] = state.R[5]; state.U[2] = state.R[8];
+                        state.R[2] = state.D[8]; state.R[5] = state.D[7]; state.R[8] = state.D[6];
+                        state.D[6] = state.L[0]; state.D[7] = state.L[3]; state.D[8] = state.L[6];
+                        state.L[0] = temp[2]; state.L[3] = temp[1]; state.L[6] = temp[0];
+                    } else {
+                        let temp = [state.U[0], state.U[1], state.U[2]];
+                        state.U[0] = state.L[6]; state.U[1] = state.L[3]; state.U[2] = state.L[0];
+                        state.L[0] = state.D[6]; state.L[3] = state.D[7]; state.L[6] = state.D[8];
+                        state.D[6] = state.R[8]; state.D[7] = state.R[5]; state.D[8] = state.R[2];
+                        state.R[2] = temp[0]; state.R[5] = temp[1]; state.R[8] = temp[2];
+                    }
+                    break;
+
+                case 'L':
+                    state.L = rotateArray(state.L, !prime);
+                    if (!prime) {
+                        let temp = [state.U[0], state.U[3], state.U[6]];
+                        state.U[0] = state.B[8]; state.U[3] = state.B[5]; state.U[6] = state.B[2];
+                        state.B[2] = state.D[6]; state.B[5] = state.D[3]; state.B[8] = state.D[0];
+                        state.D[0] = state.F[0]; state.D[3] = state.F[3]; state.D[6] = state.F[6];
+                        state.F[0] = temp[0]; state.F[3] = temp[1]; state.F[6] = temp[2];
+                    } else {
+                        let temp = [state.U[0], state.U[3], state.U[6]];
+                        state.U[0] = state.F[0]; state.U[3] = state.F[3]; state.U[6] = state.F[6];
+                        state.F[0] = state.D[0]; state.F[3] = state.D[3]; state.F[6] = state.D[6];
+                        state.D[0] = state.B[8]; state.D[3] = state.B[5]; state.D[6] = state.B[2];
+                        state.B[2] = temp[2]; state.B[5] = temp[1]; state.B[8] = temp[0];
+                    }
+                    break;
+
+                case 'R':
+                    state.R = rotateArray(state.R, !prime);
+                    if (!prime) {
+                        let temp = [state.U[2], state.U[5], state.U[8]];
+                        state.U[2] = state.F[2]; state.U[5] = state.F[5]; state.U[8] = state.F[8];
+                        state.F[2] = state.D[2]; state.F[5] = state.D[5]; state.F[8] = state.D[8];
+                        state.D[2] = state.B[6]; state.D[5] = state.B[3]; state.D[8] = state.B[0];
+                        state.B[0] = temp[2]; state.B[3] = temp[1]; state.B[6] = temp[0];
+                    } else {
+                        let temp = [state.U[2], state.U[5], state.U[8]];
+                        state.U[2] = state.B[6]; state.U[5] = state.B[3]; state.U[8] = state.B[0];
+                        state.B[0] = state.D[8]; state.B[3] = state.D[5]; state.B[6] = state.D[2];
+                        state.D[2] = state.F[2]; state.D[5] = state.F[5]; state.D[8] = state.F[8];
+                        state.F[2] = temp[0]; state.F[5] = temp[1]; state.F[8] = temp[2];
+                    }
+                    break;
+            }
+        }
+
+        function isSolved() {
+            for (let face in cubeState) {
+                const faceColors = cubeState[face];
+                const firstColor = faceColors[0];
+                if (!faceColors.every(color => color === firstColor)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        function scrambleCube() {
+            const moves = ['U', 'D', 'F', 'B', 'L', 'R'];
+            const scrambleLength = 20;
+            
+            for (let i = 0; i < scrambleLength; i++) {
+                const face = moves[Math.floor(Math.random() * moves.length)];
+                const prime = Math.random() > 0.5;
+                currentMoveQueue.push({ face, prime });
+                updateCubeState(face, prime);
+                moveHistory.push({ face, prime });
+            }
+            
+            document.getElementById('solution-steps').innerHTML = '<p>Cube scrambled! Click "Solve Cube" to see the solution.</p>';
+        }
+        
+        function resetCube() {
+            location.reload();
+        }
+        
+        function solveCube() {
+            if (isSolved()) {
+                document.getElementById('solution-steps').innerHTML = '<p style="color: #27ae60;"><strong>✓ Cube is already solved!</strong></p>';
+                return;
+            }
+
+            document.getElementById('loading').style.display = 'block';
+            
+            setTimeout(() => {
+                const solution = generateSolution();
+                displaySolution(solution);
+                document.getElementById('loading').style.display = 'none';
+            }, 500);
+        }
+        
+        function generateSolution() {
+            const solution = [];
+            
+            for (let i = moveHistory.length - 1; i >= 0; i--) {
+                const move = moveHistory[i];
+                const inverseFace = move.face;
+                const inversePrime = !move.prime;
+                
+                solution.push(inverseFace + (inversePrime ? "'" : ""));
+            }
+            
+            return solution;
+        }
+        
+        function displaySolution(solution) {
+            const container = document.getElementById('solution-steps');
+            
+            if (solution.length === 0) {
+                container.innerHTML = '<p style="color: #27ae60;"><strong>✓ Cube is already solved!</strong></p>';
+                return;
+            }
+            
+            container.innerHTML = '<p><strong>Solution found! (' + solution.length + ' moves)</strong></p>';
+            
+            solution.forEach((move, index) => {
+                const step = document.createElement('div');
+                step.className = 'step';
+                step.id = 'step-' + index;
+                step.textContent = `${index + 1}. ${move}`;
+                step.onclick = () => executeStepFromSolution(move);
+                container.appendChild(step);
+            });
+
+            const executeBut = document.createElement('button');
+            executeBut.textContent = '▶ Execute All Steps (Animated)';
+            executeBut.className = 'full-width success';
+            executeBut.style.marginTop = '10px';
+            executeBut.onclick = () => executeAllStepsAnimated(solution);
+            container.appendChild(executeBut);
+        }
+        
+        function executeStepFromSolution(move) {
+            const face = move.charAt(0);
+            const prime = move.includes("'");
+            rotateFace(face, prime);
+        }
+
+        async function executeAllStepsAnimated(solution) {
+            isSolving = true;
+            
+            for (let i = 0; i < solution.length; i++) {
+                const stepElement = document.getElementById('step-' + i);
+                if (stepElement) {
+                    stepElement.classList.add('executing');
+                }
+                
+                const move = solution[i];
+                const face = move.charAt(0);
+                const prime = move.includes("'");
+                
+                rotateFace(face, prime);
+                
+                // Wait for animation to complete + small delay
+                await new Promise(resolve => setTimeout(resolve, 400));
+                
+                if (stepElement) {
+                    stepElement.classList.remove('executing');
+                    stepElement.classList.add('current');
+                }
+            }
+            
+            isSolving = false;
+            
+            setTimeout(() => {
+                document.getElementById('solution-steps').innerHTML = '<p style="color: #27ae60; font-size: 18px;"><strong>🎉 Cube Solved!</strong></p>';
+            }, 500);
+        }
+
+        // ============ CAMERA SCANNING FUNCTIONS ============
+
+        async function startCameraScan() {
+            const modal = document.getElementById('camera-modal');
+            modal.classList.add('active');
+
+            scannedFaces = [];
+            currentFaceIndex = 0;
+            updateScanProgress();
+            updateFaceInstruction();
+            document.getElementById('scanned-faces').innerHTML = '';
+
+            try {
+                videoStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: 'environment'
+                    } 
+                });
+                const video = document.getElementById('video');
+                video.srcObject = videoStream;
+
+                // Start live preview after video is ready
+                video.onloadeddata = () => {
+                    startLivePreview();
+                };
+            } catch (err) {
+                alert('Error accessing camera: ' + err.message);
+                closeCameraModal();
+            }
+        }
+
+        function closeCameraModal() {
+            const modal = document.getElementById('camera-modal');
+            modal.classList.remove('active');
+
+            if (previewInterval) {
+                clearInterval(previewInterval);
+                previewInterval = null;
+            }
+
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+        }
+
+        function updateScanProgress() {
+            const progressFill = document.getElementById('scan-progress');
+            const percentage = (currentFaceIndex / 6) * 100;
+            progressFill.style.width = percentage + '%';
+            progressFill.textContent = currentFaceIndex + '/6 Faces';
+        }
+
+        function updateFaceInstruction() {
+            const instruction = document.getElementById('current-face-instruction');
+            if (currentFaceIndex < faceInstructions.length) {
+                instruction.textContent = faceInstructions[currentFaceIndex];
+            } else {
+                instruction.textContent = '✓ All faces scanned! Applying to cube...';
+                instruction.style.background = '#d4edda';
+                instruction.style.color = '#155724';
+            }
+        }
+
+        function captureFace() {
+            if (currentFaceIndex >= faceOrder.length) {
+                alert('All faces have been scanned! Applying to cube...');
+                applyScanToCube();
+                closeCameraModal();
+                return;
+            }
+
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('camera-canvas');
+            const ctx = canvas.getContext('2d');
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+
+            const colors = detectCubeColors(canvas);
+            
+            scannedFaces.push({
+                face: faceOrder[currentFaceIndex],
+                colors: colors
+            });
+
+            displayScannedFace(faceOrder[currentFaceIndex], colors);
+
+            currentFaceIndex++;
+            updateScanProgress();
+            updateFaceInstruction();
+
+            if (currentFaceIndex >= faceOrder.length) {
+                setTimeout(() => {
+                    applyScanToCube();
+                    closeCameraModal();
+                }, 1500);
+            }
+        }
+
+        function startLivePreview() {
+            const video = document.getElementById('video');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const previewContainer = document.getElementById('color-preview');
+
+            previewInterval = setInterval(() => {
+                if (!video.videoWidth) return;
+
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+
+                const colors = detectCubeColors(canvas);
+                
+                // Update preview
+                previewContainer.innerHTML = '';
+                colors.forEach(colorCode => {
+                    const cell = document.createElement('div');
+                    cell.className = 'preview-cell';
+                    const colorMap = {
+                        'W': '#FFFFFF',
+                        'Y': '#FFFF00',
+                        'G': '#00FF00',
+                        'B': '#0000FF',
+                        'O': '#FF8800',
+                        'R': '#FF0000'
+                    };
+                    cell.style.backgroundColor = colorMap[colorCode] || '#888';
+                    previewContainer.appendChild(cell);
+                });
+            }, 200); // Update 5 times per second
+        }
+
+        function detectCubeColors(canvas) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            const gridSize = 3;
+            // Use the same 40% center area as the visual overlay
+            const gridWidth = width * 0.4;
+            const gridHeight = height * 0.4;
+            const startX = (width - gridWidth) / 2;
+            const startY = (height - gridHeight) / 2;
+            const cellWidth = gridWidth / 3;
+            const cellHeight = gridHeight / 3;
+
+            const detectedColors = [];
+
+            for (let row = 0; row < gridSize; row++) {
+                for (let col = 0; col < gridSize; col++) {
+                    // Sample from the center of each cell
+                    const x = Math.floor(startX + col * cellWidth + cellWidth / 2);
+                    const y = Math.floor(startY + row * cellHeight + cellHeight / 2);
+
+                    // Sample a 5x5 area and average it for better accuracy
+                    let rSum = 0, gSum = 0, bSum = 0, count = 0;
+                    for (let dy = -2; dy <= 2; dy++) {
+                        for (let dx = -2; dx <= 2; dx++) {
+                            const imageData = ctx.getImageData(x + dx, y + dy, 1, 1);
+                            rSum += imageData.data[0];
+                            gSum += imageData.data[1];
+                            bSum += imageData.data[2];
+                            count++;
+                        }
+                    }
+                    const r = Math.round(rSum / count);
+                    const g = Math.round(gSum / count);
+                    const b = Math.round(bSum / count);
+
+                    const color = identifyColor(r, g, b);
+                    detectedColors.push(color);
+                }
+            }
+
+            return detectedColors;
+        }
+
+        function identifyColor(r, g, b) {
+            // Normalize values
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const delta = max - min;
+            
+            // Calculate brightness
+            const brightness = (r + g + b) / 3;
+            
+            // White: high brightness, low saturation
+            if (brightness > 180 && delta < 60) {
+                return 'W';
+            }
+            
+            // Yellow: red and green high, blue low
+            if (r > 180 && g > 180 && b < 130) {
+                return 'Y';
+            }
+            
+            // Orange: red highest, green medium, blue low
+            if (r > 180 && g > 80 && g < 200 && b < 100 && r > g && g > b) {
+                return 'O';
+            }
+            
+            // Red: red much higher than others
+            if (r > 130 && r > g * 1.5 && r > b * 1.5) {
+                return 'R';
+            }
+            
+            // Green: green much higher than others
+            if (g > 130 && g > r * 1.3 && g > b * 1.3) {
+                return 'G';
+            }
+            
+            // Blue: blue much higher than others
+            if (b > 130 && b > r * 1.3 && b > g * 1.3) {
+                return 'B';
+            }
+
+            // Fallback to distance-based matching
+            const colorDefs = [
+                { name: 'W', rgb: [255, 255, 255] },
+                { name: 'Y', rgb: [255, 255, 0] },
+                { name: 'G', rgb: [0, 200, 0] },
+                { name: 'B', rgb: [0, 0, 200] },
+                { name: 'O', rgb: [255, 140, 0] },
+                { name: 'R', rgb: [200, 0, 0] }
+            ];
+
+            let bestMatch = 'W';
+            let minDistance = Infinity;
+
+            for (const color of colorDefs) {
+                const distance = Math.sqrt(
+                    Math.pow(r - color.rgb[0], 2) +
+                    Math.pow(g - color.rgb[1], 2) +
+                    Math.pow(b - color.rgb[2], 2)
+                );
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    bestMatch = color.name;
+                }
+            }
+
+            return bestMatch;
+        }
+
+        function displayScannedFace(face, colors) {
+            const container = document.getElementById('scanned-faces');
+            
+            const faceDiv = document.createElement('div');
+            faceDiv.className = 'face-preview';
+            
+            const label = document.createElement('div');
+            label.className = 'face-label';
+            const faceNames = {
+                'U': 'White (Up)',
+                'D': 'Yellow (Down)',
+                'F': 'Green (Front)',
+                'B': 'Blue (Back)',
+                'L': 'Orange (Left)',
+                'R': 'Red (Right)'
+            };
+            label.textContent = `${faceNames[face]} - Captured ✓`;
+            faceDiv.appendChild(label);
+
+            const grid = document.createElement('div');
+            grid.className = 'face-grid';
+
+            colors.forEach(colorCode => {
+                const sticker = document.createElement('div');
+                sticker.className = 'face-sticker';
+                
+                const colorMap = {
+                    'W': '#FFFFFF',
+                    'Y': '#FFFF00',
+                    'G': '#00FF00',
+                    'B': '#0000FF',
+                    'O': '#FF8800',
+                    'R': '#FF0000'
+                };
+                
+                sticker.style.backgroundColor = colorMap[colorCode] || '#888';
+                grid.appendChild(sticker);
+            });
+
+            faceDiv.appendChild(grid);
+            container.appendChild(faceDiv);
+        }
+
+        function applyScanToCube() {
+            scannedFaces.forEach(({ face, colors }) => {
+                cubeState[face] = colors;
+            });
+
+            moveHistory = [];
+            recreateCubeFromState();
+
+            alert('✓ Cube scanned successfully!\n\nYour real cube has been recreated. Click "Solve Cube" to see the solution!');
+        }
+
+        function recreateCubeFromState() {
+            cubelets.forEach(cubelet => cubeGroup.remove(cubelet));
+            cubelets = [];
+
+            const size = CUBELET_SIZE;
+            
+            const getColorValue = (colorCode) => {
+                const colorMap = {
+                    'W': colors.white,
+                    'Y': colors.yellow,
+                    'G': colors.green,
+                    'B': colors.blue,
+                    'O': colors.orange,
+                    'R': colors.red
+                };
+                return colorMap[colorCode] || colors.black;
+            };
+
+            const posToIndex = (x, y, z, face) => {
+                switch(face) {
+                    case 'U':
+                        return (1 - z) * 3 + (x + 1);
+                    case 'D':
+                        return (z + 1) * 3 + (x + 1);
+                    case 'F':
+                        return (1 - y) * 3 + (x + 1);
+                    case 'B':
+                        return (1 - y) * 3 + (1 - x);
+                    case 'L':
+                        return (1 - y) * 3 + (z + 1);
+                    case 'R':
+                        return (1 - y) * 3 + (1 - z);
+                }
+                return 0;
+            };
+
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    for (let z = -1; z <= 1; z++) {
+                        const geometry = new THREE.BoxGeometry(size, size, size);
+                        const material = new THREE.MeshLambertMaterial({ color: colors.black });
+                        const cubelet = new THREE.Mesh(geometry, material);
+                        cubelet.scale.setScalar(0.95);
+
+                        const stickerSize = size * 0.95;
+                        const offset = (size / 2) + 0.001;
+
+                        if (x === 1) {
+                            const idx = posToIndex(x, y, z, 'R');
+                            const colorValue = getColorValue(cubeState.R[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(offset, 0, 0);
+                            sticker.rotation.y = Math.PI / 2;
+                            cubelet.add(sticker);
+                        }
+
+                        if (x === -1) {
+                            const idx = posToIndex(x, y, z, 'L');
+                            const colorValue = getColorValue(cubeState.L[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(-offset, 0, 0);
+                            sticker.rotation.y = -Math.PI / 2;
+                            cubelet.add(sticker);
+                        }
+
+                        if (y === 1) {
+                            const idx = posToIndex(x, y, z, 'U');
+                            const colorValue = getColorValue(cubeState.U[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(0, offset, 0);
+                            sticker.rotation.x = -Math.PI / 2;
+                            cubelet.add(sticker);
+                        }
+
+                        if (y === -1) {
+                            const idx = posToIndex(x, y, z, 'D');
+                            const colorValue = getColorValue(cubeState.D[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(0, -offset, 0);
+                            sticker.rotation.x = Math.PI / 2;
+                            cubelet.add(sticker);
+                        }
+
+                        if (z === 1) {
+                            const idx = posToIndex(x, y, z, 'F');
+                            const colorValue = getColorValue(cubeState.F[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(0, 0, offset);
+                            cubelet.add(sticker);
+                        }
+
+                        if (z === -1) {
+                            const idx = posToIndex(x, y, z, 'B');
+                            const colorValue = getColorValue(cubeState.B[idx]);
+                            const sticker = createSticker(stickerSize, colorValue);
+                            sticker.position.set(0, 0, -offset);
+                            sticker.rotation.y = Math.PI;
+                            cubelet.add(sticker);
+                        }
+
+                        cubelet.position.set(
+                            x * CUBELET_SPACING,
+                            y * CUBELET_SPACING,
+                            z * CUBELET_SPACING
+                        );
+
+                        cubeGroup.add(cubelet);
+                        cubelets.push(cubelet);
+                    }
+                }
+            }
+        }
+        
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
