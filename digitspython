@@ -1,0 +1,269 @@
+"""
+CNN Digit Recognizer - Live Demo
+=================================
+Demonstrates how training transforms random guesses into accurate predictions
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow import keras
+from tensorflow.keras import layers
+import random
+
+# Set style for better-looking plots
+plt.style.use('seaborn-v0_8-darkgrid')
+
+print("=" * 60)
+print("CNN DIGIT RECOGNIZER - TRAINING DEMO")
+print("=" * 60)
+
+# 1. Load MNIST Dataset
+print("\n📦 Loading MNIST dataset...")
+(x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
+
+# Normalize pixel values to 0-1
+x_train = x_train.astype('float32') / 255.0
+x_test = x_test.astype('float32') / 255.0
+
+# Reshape for CNN (add channel dimension)
+x_train = x_train.reshape(-1, 28, 28, 1)
+x_test = x_test.reshape(-1, 28, 28, 1)
+
+print(f"✓ Training samples: {x_train.shape[0]}")
+print(f"✓ Test samples: {x_test.shape[0]}")
+
+# 2. Show some sample digits
+print("\n🖼️  Sample MNIST digits:")
+fig, axes = plt.subplots(2, 5, figsize=(12, 5))
+fig.suptitle('Sample MNIST Digits', fontsize=16, fontweight='bold')
+for i, ax in enumerate(axes.flat):
+    ax.imshow(x_test[i].reshape(28, 28), cmap='gray')
+    ax.set_title(f'Label: {y_test[i]}', fontsize=12)
+    ax.axis('off')
+plt.tight_layout()
+plt.show()
+
+# 3. Build the CNN Model
+print("\n🏗️  Building CNN model...")
+model = keras.Sequential([
+    layers.Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=(28, 28, 1)),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Flatten(),
+    layers.Dropout(0.25),
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.5),
+    layers.Dense(10, activation='softmax')
+])
+
+model.compile(
+    optimizer='adam',
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+print("✓ Model architecture:")
+model.summary()
+
+# 4. TEST UNTRAINED MODEL (Random Predictions)
+print("\n" + "=" * 60)
+print("🔴 BEFORE TRAINING - UNTRAINED MODEL (Random Guesses)")
+print("=" * 60)
+
+# Select 10 random test images
+test_indices = random.sample(range(len(x_test)), 10)
+test_samples = x_test[test_indices]
+test_labels = y_test[test_indices]
+
+# Make predictions with UNTRAINED model
+untrained_predictions = model.predict(test_samples, verbose=0)
+untrained_predicted_classes = np.argmax(untrained_predictions, axis=1)
+
+# Calculate accuracy
+untrained_correct = np.sum(untrained_predicted_classes == test_labels)
+untrained_accuracy = (untrained_correct / len(test_labels)) * 100
+
+print(f"\n📊 Untrained Model Accuracy: {untrained_accuracy:.1f}% ({untrained_correct}/{len(test_labels)} correct)")
+print("   (Should be around 10% - random guessing!)\n")
+
+# Visualize untrained predictions
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+fig.suptitle('🔴 UNTRAINED MODEL - Random Predictions', fontsize=16, fontweight='bold', color='red')
+
+for i, ax in enumerate(axes.flat):
+    ax.imshow(test_samples[i].reshape(28, 28), cmap='gray')
+    
+    predicted = untrained_predicted_classes[i]
+    actual = test_labels[i]
+    confidence = untrained_predictions[i][predicted] * 100
+    
+    # Red if wrong, green if correct
+    color = 'green' if predicted == actual else 'red'
+    
+    ax.set_title(f'Pred: {predicted} ({confidence:.1f}%)\nActual: {actual}', 
+                 fontsize=11, color=color, fontweight='bold')
+    ax.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+# 5. TRAIN THE MODEL
+print("\n" + "=" * 60)
+print("🚀 TRAINING THE MODEL...")
+print("=" * 60)
+
+history = model.fit(
+    x_train, y_train,
+    batch_size=128,
+    epochs=5,
+    validation_split=0.2,
+    verbose=1
+)
+
+print("\n✓ Training complete!")
+
+# Plot training history
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
+
+# Accuracy plot
+ax1.plot(history.history['accuracy'], label='Training Accuracy', marker='o', linewidth=2)
+ax1.plot(history.history['val_accuracy'], label='Validation Accuracy', marker='s', linewidth=2)
+ax1.set_title('Model Accuracy Over Time', fontsize=14, fontweight='bold')
+ax1.set_xlabel('Epoch', fontsize=12)
+ax1.set_ylabel('Accuracy', fontsize=12)
+ax1.legend(fontsize=11)
+ax1.grid(True, alpha=0.3)
+
+# Loss plot
+ax2.plot(history.history['loss'], label='Training Loss', marker='o', linewidth=2)
+ax2.plot(history.history['val_loss'], label='Validation Loss', marker='s', linewidth=2)
+ax2.set_title('Model Loss Over Time', fontsize=14, fontweight='bold')
+ax2.set_xlabel('Epoch', fontsize=12)
+ax2.set_ylabel('Loss', fontsize=12)
+ax2.legend(fontsize=11)
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# 6. TEST TRAINED MODEL (Accurate Predictions)
+print("\n" + "=" * 60)
+print("🟢 AFTER TRAINING - TRAINED MODEL (Accurate Predictions)")
+print("=" * 60)
+
+# Make predictions with TRAINED model on SAME samples
+trained_predictions = model.predict(test_samples, verbose=0)
+trained_predicted_classes = np.argmax(trained_predictions, axis=1)
+
+# Calculate accuracy
+trained_correct = np.sum(trained_predicted_classes == test_labels)
+trained_accuracy = (trained_correct / len(test_labels)) * 100
+
+print(f"\n📊 Trained Model Accuracy: {trained_accuracy:.1f}% ({trained_correct}/{len(test_labels)} correct)")
+print("   (Should be around 95-99% - very accurate!)\n")
+
+# Visualize trained predictions
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+fig.suptitle('🟢 TRAINED MODEL - Accurate Predictions', fontsize=16, fontweight='bold', color='green')
+
+for i, ax in enumerate(axes.flat):
+    ax.imshow(test_samples[i].reshape(28, 28), cmap='gray')
+    
+    predicted = trained_predicted_classes[i]
+    actual = test_labels[i]
+    confidence = trained_predictions[i][predicted] * 100
+    
+    # Red if wrong, green if correct
+    color = 'green' if predicted == actual else 'red'
+    
+    ax.set_title(f'Pred: {predicted} ({confidence:.1f}%)\nActual: {actual}', 
+                 fontsize=11, color=color, fontweight='bold')
+    ax.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+# 7. COMPARISON SUMMARY
+print("\n" + "=" * 60)
+print("📈 FINAL COMPARISON")
+print("=" * 60)
+
+print(f"""
+Before Training (Untrained Model):
+  • Accuracy: {untrained_accuracy:.1f}%
+  • Correct predictions: {untrained_correct}/{len(test_labels)}
+  • Status: Random guessing ❌
+
+After Training (Trained Model):
+  • Accuracy: {trained_accuracy:.1f}%
+  • Correct predictions: {trained_correct}/{len(test_labels)}
+  • Status: Highly accurate ✅
+
+Improvement: +{trained_accuracy - untrained_accuracy:.1f} percentage points!
+""")
+
+# 8. Evaluate on full test set
+print("\n🎯 Evaluating on full test set...")
+test_loss, test_accuracy = model.evaluate(x_test, y_test, verbose=0)
+print(f"Final Test Accuracy: {test_accuracy * 100:.2f}%")
+
+# 9. Show confusion on a few predictions
+print("\n" + "=" * 60)
+print("🔍 DETAILED PREDICTION ANALYSIS (Random Samples)")
+print("=" * 60)
+
+# Get 5 random samples
+analysis_indices = random.sample(range(len(x_test)), 5)
+fig, axes = plt.subplots(1, 5, figsize=(16, 4))
+fig.suptitle('Trained Model: Confidence Distribution', fontsize=14, fontweight='bold')
+
+for idx, ax_img in enumerate(axes):
+    i = analysis_indices[idx]
+    
+    # Show digit
+    ax_img.imshow(x_test[i].reshape(28, 28), cmap='gray')
+    
+    # Get prediction
+    pred = model.predict(x_test[i:i+1], verbose=0)[0]
+    predicted_class = np.argmax(pred)
+    actual_class = y_test[i]
+    
+    # Color based on correctness
+    color = 'green' if predicted_class == actual_class else 'red'
+    ax_img.set_title(f'Pred: {predicted_class}\nActual: {actual_class}', 
+                     color=color, fontweight='bold', fontsize=11)
+    ax_img.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+# Show probability bars for these predictions
+fig, axes = plt.subplots(1, 5, figsize=(16, 3))
+fig.suptitle('Prediction Confidence (All 10 Classes)', fontsize=14, fontweight='bold')
+
+for idx, ax in enumerate(axes):
+    i = analysis_indices[idx]
+    pred = model.predict(x_test[i:i+1], verbose=0)[0]
+    
+    colors = ['green' if j == np.argmax(pred) else 'gray' for j in range(10)]
+    ax.bar(range(10), pred * 100, color=colors, alpha=0.7)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel('Digit', fontsize=10)
+    ax.set_ylabel('Confidence %', fontsize=10)
+    ax.set_title(f'True: {y_test[i]}', fontsize=11)
+    ax.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+print("\n" + "=" * 60)
+print("✅ DEMO COMPLETE!")
+print("=" * 60)
+print("""
+Key Takeaway:
+Training transformed a model that guessed randomly (10% accuracy)
+into one that predicts with high confidence (95-99% accuracy)!
+
+This demonstrates the power of neural network training on real data.
+""")
